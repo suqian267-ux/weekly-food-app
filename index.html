@@ -7,10 +7,250 @@
 <section class="section" id="guide"><h2>每日三餐搭配</h2><div class="card"><b>早餐</b><p id="breakfast"></p><b>午餐</b><p id="lunch"></p><b>晚餐</b><p id="dinner"></p></div><h2>备餐与食品安全</h2><div class="notice" id="safety"></div><h2>更新说明</h2><p class="muted">应用会在联网打开时检查托管端的 recipes.json。将新菜单文件替换到网站后，应用下次联网打开即可读取。当前版本尚未连接自动生成食谱的云端服务，因此不会自行生成新菜单。</p><button class="btn" id="refresh">重新读取菜单</button></section>
 </main><nav class="bottom"><button class="active" data-page="menu">本周菜单</button><button data-page="shop">采购清单</button><button data-page="guide">备餐指南</button></nav>
 <script>
-let data, day=0; const checked=JSON.parse(localStorage.getItem('checkedItems')||'{}');
-async function load(){try{let r=await fetch('./recipes.json?v='+Date.now(),{cache:'no-store'});if(!r.ok)throw Error();data=await r.json();render();}catch(e){document.getElementById('updated').textContent='菜单读取失败，请检查网络后刷新';}}
-function render(){document.getElementById('updated').textContent=(data.week||'本周菜单')+' · 更新于 '+(data.updated||'未知');document.getElementById('days').innerHTML=data.recipes.map((x,i)=>`<button class="tab ${i===day?'active':''}" data-day="${i}">${x.day}</button>`).join('');document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{day=+b.dataset.day;renderMenu();});document.getElementById('breakfast').textContent=data.meals.breakfast;document.getElementById('lunch').textContent=data.meals.lunch;document.getElementById('dinner').textContent=data.meals.dinner;document.getElementById('safety').innerHTML=(data.notes||[]).map(x=>'• '+x).join('<br>');renderMenu();renderShop();}
-function renderMenu(){let x=data.recipes[day];document.querySelectorAll('[data-day]').forEach(b=>b.classList.toggle('active',+b.dataset.day===day));document.getElementById('menu').innerHTML=`<div class="card"><div class="day">${x.day} · 今日主菜</div><div class="dish">${x.name}</div><div class="tag">${x.tag||''}</div><div class="grid" style="margin-top:14px"><div class="mini"><b>约3份</b>一次烹饪</div><div class="mini"><b>按需调整</b>主食与早餐</div></div><h2>食材用量</h2><ul>${x.ingredients.map(i=>`<li>${i}</li>`).join('')}</ul><h2>烹饪步骤</h2><ol>${x.steps.map(s=>`<li>${s}</li>`).join('')}</ol></div>`;}
-function renderShop(){let groups=[['周一、周二',0,2],['周三、周四',2,4],['周五、周六',4,6],['周日',6,7]];document.getElementById('shopping').innerHTML=groups.map(([title,a,b])=>{let items=[...new Set(data.recipes.slice(a,b).flatMap(x=>x.buy||[]))];return `<div class="card"><b>${title}</b>${items.map(v=>{let k=title+'|'+v;return `<label class="check"><input type="checkbox" data-key="${encodeURIComponent(k)}" ${checked[k]?'checked':''}><span class="${checked[k]?'done':''}">${v}</span></label>`}).join('')}</div>`}).join('');document.querySelectorAll('#shopping input').forEach(el=>el.onchange=()=>{let k=decodeURIComponent(el.dataset.key);checked[k]=el.checked;localStorage.setItem('checkedItems',JSON.stringify(checked));el.nextElementSibling.classList.toggle('done',el.checked);});}
-document.querySelectorAll('.bottom button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.bottom button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.section').forEach(s=>s.classList.toggle('active',s.id===b.dataset.page));});document.getElementById('reset').onclick=()=>{localStorage.removeItem('checkedItems');Object.keys(checked).forEach(k=>delete checked[k]);renderShop();};document.getElementById('refresh').onclick=load;if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));load();
+let data = null;
+let day = 0;
+
+let checked = {};
+try {
+  checked = JSON.parse(localStorage.getItem('checkedItems') || '{}');
+} catch(e) {
+  checked = {};
+}
+
+function safe(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;',
+    '<':'&lt;',
+    '>':'&gt;',
+    '"':'&quot;',
+    "'":'&#39;'
+  })[c]);
+}
+
+async function load() {
+  const updated = document.getElementById('updated');
+
+  try {
+    updated.textContent = '正在更新菜单...';
+
+    const response = await fetch('./recipes.json', {
+      cache: 'no-store'
+    });
+
+    if (!response.ok) {
+      throw new Error('菜单文件读取失败');
+    }
+
+    const result = await response.json();
+
+    if (
+      !Array.isArray(result.recipes) ||
+      result.recipes.length !== 7 ||
+      !result.meals
+    ) {
+      throw new Error('食谱数据格式不正确');
+    }
+
+    result.recipes.forEach(item => {
+      if (
+        !item.day ||
+        !item.name ||
+        !Array.isArray(item.ingredients) ||
+        !Array.isArray(item.steps)
+      ) {
+        throw new Error('食谱内容不完整');
+      }
+    });
+
+    data = result;
+    day = Math.min(day, data.recipes.length - 1);
+
+    render();
+
+    updated.textContent =
+      (data.week || '本周菜单') +
+      ' · 更新于 ' + (data.updated || '未知');
+
+  } catch(error) {
+    console.error(error);
+    updated.textContent =
+      '菜单读取失败，请检查网络或 recipes.json 文件';
+  }
+}
+
+function render() {
+  document.getElementById('days').innerHTML =
+    data.recipes.map((x, i) =>
+      `<button class="tab ${i === day ? 'active' : ''}"
+      data-day="${i}">${safe(x.day)}</button>`
+    ).join('');
+
+  document.querySelectorAll('[data-day]').forEach(btn => {
+    btn.onclick = () => {
+      day = Number(btn.dataset.day);
+      renderMenu();
+    };
+  });
+
+  document.getElementById('breakfast').textContent =
+    data.meals.breakfast || '';
+
+  document.getElementById('lunch').textContent =
+    data.meals.lunch || '';
+
+  document.getElementById('dinner').textContent =
+    data.meals.dinner || '';
+
+  document.getElementById('safety').innerHTML =
+    (data.notes || []).map(x => safe(x)).join('<br>');
+
+  renderMenu();
+  renderShop();
+}
+
+function renderMenu() {
+  const x = data.recipes[day];
+
+  document.querySelectorAll('[data-day]').forEach(btn => {
+    btn.classList.toggle(
+      'active',
+      Number(btn.dataset.day) === day
+    );
+  });
+
+  document.getElementById('menu').innerHTML = `
+    <div class="card">
+      <div class="day">${safe(x.day)} · 今日主菜</div>
+
+      <div class="dish">${safe(x.name)}</div>
+
+      <div class="tag">${safe(x.tag || '')}</div>
+
+      <div class="grid" style="margin-top:14px">
+        <div class="mini">
+          <b>约3份</b>一次烹饪
+        </div>
+        <div class="mini">
+          <b>按需调整</b>主食与早餐
+        </div>
+      </div>
+
+      <h2>食材用量</h2>
+
+      <ul>
+        ${x.ingredients.map(i =>
+          `<li>${safe(i)}</li>`
+        ).join('')}
+      </ul>
+
+      <h2>烹饪步骤</h2>
+
+      <ol>
+        ${x.steps.map(s =>
+          `<li>${safe(s)}</li>`
+        ).join('')}
+      </ol>
+    </div>
+  `;
+}
+
+function renderShop() {
+  const groups = [
+    ['周一、周二', 0, 2],
+    ['周三、周四', 2, 4],
+    ['周五、周六', 4, 6],
+    ['周日', 6, 7]
+  ];
+
+  document.getElementById('shopping').innerHTML =
+    groups.map(([title, a, b]) => {
+
+      const items = [
+        ...new Set(
+          data.recipes
+            .slice(a, b)
+            .flatMap(x => x.buy || [])
+        )
+      ];
+
+      return `
+        <div class="card">
+          <b>${title}</b>
+
+          ${items.map(v => {
+            const key = title + '|' + v;
+
+            return `
+              <label class="check">
+                <input type="checkbox"
+                  data-key="${safe(encodeURIComponent(key))}"
+                  ${checked[key] ? 'checked' : ''}>
+
+                <span class="${checked[key] ? 'done' : ''}">
+                  ${safe(v)}
+                </span>
+              </label>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }).join('');
+
+  document.querySelectorAll('#shopping input').forEach(el => {
+    el.onchange = () => {
+      const key = decodeURIComponent(el.dataset.key);
+
+      checked[key] = el.checked;
+
+      localStorage.setItem(
+        'checkedItems',
+        JSON.stringify(checked)
+      );
+
+      el.nextElementSibling.classList.toggle(
+        'done',
+        el.checked
+      );
+    };
+  });
+}
+
+document.querySelectorAll('.bottom button').forEach(btn => {
+  btn.onclick = () => {
+
+    document.querySelectorAll('.bottom button')
+      .forEach(x => x.classList.toggle('active', x === btn));
+
+    document.querySelectorAll('.section')
+      .forEach(section =>
+        section.classList.toggle(
+          'active',
+          section.id === btn.dataset.page
+        )
+      );
+  };
+});
+
+document.getElementById('reset').onclick = () => {
+  localStorage.removeItem('checkedItems');
+  checked = {};
+  renderShop();
+};
+
+document.getElementById('refresh').onclick = load;
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', async () => {
+    try {
+      const registration =
+        await navigator.serviceWorker.register('./sw.js');
+
+      registration.update();
+    } catch(error) {
+      console.error('离线缓存注册失败：', error);
+    }
+  });
+}
+
+load();
 </script></body></html>
