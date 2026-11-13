@@ -1,17 +1,19 @@
 {
   "name": "一周好好吃饭",
   "short_name": "好好吃饭",
+  "description": "每天吃得健康、简单又营养的七天家常食谱",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#f5f7f4",
   "theme_color": "#315c48",
   "icons": [
     {
-      "src": "icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }
